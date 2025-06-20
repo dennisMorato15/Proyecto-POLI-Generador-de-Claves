@@ -13,9 +13,47 @@ pipeline {
     }
 
     stages {
+        stage('Cleanup Workspace') {
+            steps {
+                script {
+                    echo "🧹 Limpiando workspace..."
+                    // Limpiar workspace de manera forzada
+                    cleanWs()
+                    deleteDir()
+                    
+                    // Limpiar manualmente si persisten archivos problemáticos
+                    sh '''
+                        # Eliminar archivos con permisos problemáticos
+                        if [ -d "/var/jenkins_home/workspace/CI-Generador-Claves" ]; then
+                            echo "Eliminando directorio existente..."
+                            rm -rf /var/jenkins_home/workspace/CI-Generador-Claves || true
+                        fi
+                        
+                        # Crear directorio limpio
+                        mkdir -p /var/jenkins_home/workspace/CI-Generador-Claves || true
+                    '''
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
-                checkout scm
+                script {
+                    echo "📥 Descargando código desde Git..."
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']], // Cambia por tu rama principal si es diferente
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CleanCheckout']
+                        ],
+                        submoduleCfg: [],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/Eziuz/Proyecto-POLI-Generador-de-Claves.git'
+                        ]]
+                    ])
+                }
             }
         }
 
@@ -109,9 +147,10 @@ pipeline {
 
     post {
         always {
-            // Limpiar workspace y eliminar imágenes locales
-            cleanWs()
             script {
+                echo "🧹 Limpieza final..."
+                
+                // Eliminar imágenes locales primero
                 sh """
                     # Obtener contenedores que usan nuestras imágenes
                     CONTAINERS=\$(docker ps -aq --filter ancestor=${IMAGE_NAME} 2>/dev/null || echo "")
@@ -129,6 +168,18 @@ pipeline {
                     docker rmi ${IMAGE_NAME}:${GIT_COMMIT_SHORT} || true
                     docker image prune -f || true
                 """
+                
+                // Limpiar workspace después de Docker
+                try {
+                    cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenSuccess: true, cleanWhenUnstable: true)
+                } catch (Exception e) {
+                    echo "Warning: No se pudo limpiar workspace automáticamente: ${e.getMessage()}"
+                    // Limpieza manual como fallback
+                    sh '''
+                        cd /var/jenkins_home/workspace/
+                        rm -rf CI-Generador-Claves || true
+                    '''
+                }
             }
         }
         success {

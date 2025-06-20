@@ -1,0 +1,27 @@
+# Node.js
+node_modules/
+.env
+*.log
+
+# Next.js
+.next/
+out/
+.next/cache/
+
+# Yarn (Berry)
+.yarn/*
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+.yarnrc.yml
+.yarn/install-state.gz
+
+# Sistemas operativos
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/

@@ -98,7 +98,6 @@ pipeline {
                     echo "🔧 Ejecutando 'yarn install' fuera del contenedor para actualizar yarn.lock"
                     sh '''
                         cd /var/jenkins_home/workspace/CI-Generador-Claves
-                        corepack enable
                         yarn install || true
                     '''
                 }

@@ -43,7 +43,7 @@ pipeline {
                     echo "📥 Descarga manual del código..."
                     sh '''
                         cd /var/jenkins_home/workspace/CI-Generador-Claves
-                        git clone https://github.com/Eziuz/Proyecto-POLI-Generador-de-Claves.git .
+                        git clone git clone https://github.com/dennisMorato15/Proyecto-POLI-Generador-de-Claves.git .
                         ls -la
                         git log --oneline -1
                     '''

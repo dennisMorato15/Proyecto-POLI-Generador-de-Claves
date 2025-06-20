@@ -19,7 +19,7 @@ pipeline {
         stage('Determine Version') {
             steps {
                 script {
-                    // Primero verifica si node está instalado, si no usa alternativa
+                    // Verificar si Node.js está instalado
                     def nodeExists = sh(script: 'command -v node || echo "false"', returnStdout: true).trim()
                     
                     if (nodeExists != "false") {
@@ -65,7 +65,7 @@ pipeline {
             }
         }
 
-        stage('Preparar entorno Yarn') {
+        stage('Preparar Entorno Yarn') {
             steps {
                 script {
                     sh '''
@@ -73,10 +73,10 @@ pipeline {
                     # Crear estructura de directorios necesaria
                     mkdir -p .yarn/releases
                     
-                    # Crear archivo de configuración Yarn
-                    cat > .yarnrc.yml <<EOL
-                    yarnPath: .yarn/releases/yarn-berry.cjs
-                    nodeLinker: node-modules
+                    # Crear archivo .yarnrc.yml con formato YAML válido
+                    cat > .yarnrc.yml << 'EOL'
+                    yarnPath: ".yarn/releases/yarn-berry.cjs"
+                    nodeLinker: "node-modules"
                     enableGlobalCache: true
                     EOL
                     
@@ -91,6 +91,8 @@ pipeline {
                     echo "Verificando estructura creada:"
                     ls -la .yarn/
                     ls -la .yarn/releases/
+                    echo "Contenido de .yarnrc.yml:"
+                    cat .yarnrc.yml
                     '''
                 }
             }
@@ -149,12 +151,12 @@ pipeline {
             }
         }
 
-        stage('Limpiar archivos temporales') {
+        stage('Limpiar Archivos Temporales') {
             steps {
                 sh '''
                 echo "Limpiando archivos temporales..."
-                rm -f .yarnrc.yml
-                rm -rf .yarn/releases
+                rm -f .yarnrc.yml || true
+                rm -rf .yarn/releases || true
                 '''
             }
         }
@@ -203,8 +205,9 @@ pipeline {
         failure {
             echo '❌ Error al construir o publicar la imagen'
             script {
-                // Intenta limpiar aunque falle
+                // Limpieza adicional en caso de fallo
                 sh '''
+                echo "Realizando limpieza por fallo..."
                 rm -f .yarnrc.yml || true
                 rm -rf .yarn/releases || true
                 '''

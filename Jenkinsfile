@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    options {
+        skipDefaultCheckout(true)  // Evitar checkout automático
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
     environment {
         // Configuración de DockerHub
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
@@ -9,50 +15,59 @@ pipeline {
 
         // Etiquetas de la imagen con versionado semántico
         IMAGE_NAME = "${DOCKERHUB_USERNAME}/${DOCKERHUB_REPO}"
-        GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
     }
 
     stages {
         stage('Cleanup Workspace') {
             steps {
                 script {
-                    echo "🧹 Limpiando workspace..."
-                    // Limpiar workspace de manera forzada
-                    cleanWs()
-                    deleteDir()
+                    echo "🧹 Limpieza agresiva del workspace..."
                     
-                    // Limpiar manualmente si persisten archivos problemáticos
+                    // Cambiar permisos y eliminar archivos problemáticos
                     sh '''
-                        # Eliminar archivos con permisos problemáticos
-                        if [ -d "/var/jenkins_home/workspace/CI-Generador-Claves" ]; then
+                        # Ir al directorio de trabajo
+                        cd /var/jenkins_home/workspace/
+                        
+                        # Intentar cambiar permisos de archivos problemáticos
+                        if [ -d "CI-Generador-Claves" ]; then
+                            echo "Cambiando permisos de archivos problemáticos..."
+                            find CI-Generador-Claves -name ".yarn" -type d -exec chmod -R 777 {} + || true
+                            find CI-Generador-Claves -path "*/.yarn/*" -exec chmod 777 {} + || true
+                            
                             echo "Eliminando directorio existente..."
-                            rm -rf /var/jenkins_home/workspace/CI-Generador-Claves || true
+                            rm -rf CI-Generador-Claves || true
                         fi
                         
-                        # Crear directorio limpio
-                        mkdir -p /var/jenkins_home/workspace/CI-Generador-Claves || true
+                        echo "Creando directorio limpio..."
+                        mkdir -p CI-Generador-Claves
+                        cd CI-Generador-Claves
+                        pwd
                     '''
                 }
             }
         }
 
-        stage('Checkout') {
+        stage('Manual Checkout') {
             steps {
                 script {
-                    echo "📥 Descargando código desde Git..."
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: '*/main']], // Cambia por tu rama principal si es diferente
-                        doGenerateSubmoduleConfigurations: false,
-                        extensions: [
-                            [$class: 'CleanBeforeCheckout'],
-                            [$class: 'CleanCheckout']
-                        ],
-                        submoduleCfg: [],
-                        userRemoteConfigs: [[
-                            url: 'https://github.com/Eziuz/Proyecto-POLI-Generador-de-Claves.git'
-                        ]]
-                    ])
+                    echo "📥 Descarga manual del código..."
+                    sh '''
+                        # Ir al directorio de trabajo
+                        cd /var/jenkins_home/workspace/CI-Generador-Claves
+                        
+                        # Clonar el repositorio
+                        git clone https://github.com/Eziuz/Proyecto-POLI-Generador-de-Claves.git .
+                        
+                        # Verificar que se clonó correctamente
+                        ls -la
+                        
+                        # Obtener información del commit
+                        git log --oneline -1
+                    '''
+                    
+                    // Establecer variables de Git después del checkout manual
+                    env.GIT_COMMIT_SHORT = sh(script: 'cd /var/jenkins_home/workspace/CI-Generador-Claves && git rev-parse --short HEAD', returnStdout: true).trim()
+                    echo "🔖 Git commit: ${env.GIT_COMMIT_SHORT}"
                 }
             }
         }
@@ -60,9 +75,12 @@ pipeline {
         stage('Determine Version') {
             steps {
                 script {
+                    // Cambiar al directorio correcto
+                    sh 'cd /var/jenkins_home/workspace/CI-Generador-Claves'
+                    
                     // Intentar obtener la versión desde Git tags
                     def gitTag = sh(
-                        script: "git describe --tags --exact-match HEAD 2>/dev/null || echo ''",
+                        script: "cd /var/jenkins_home/workspace/CI-Generador-Claves && git describe --tags --exact-match HEAD 2>/dev/null || echo ''",
                         returnStdout: true
                     ).trim()
 
@@ -73,7 +91,7 @@ pipeline {
                     } else {
                         // Si no hay tag, usar versión desde package.json + build number
                         def packageVersion = sh(
-                            script: "node -p \"require('./package.json').version\"",
+                            script: "cd /var/jenkins_home/workspace/CI-Generador-Claves && node -p \"require('./package.json').version\"",
                             returnStdout: true
                         ).trim()
                         env.VERSION = "${packageVersion}-build.${BUILD_NUMBER}"
@@ -89,8 +107,12 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
+                    // Cambiar al directorio correcto
+                    sh 'cd /var/jenkins_home/workspace/CI-Generador-Claves'
+                    
                     // Construir la imagen Docker con versionado semántico
                     sh """
+                        cd /var/jenkins_home/workspace/CI-Generador-Claves
                         docker build -t ${IMAGE_NAME}:${VERSION} \
                                      -t ${IMAGE_NAME}:latest \
                                      -t ${IMAGE_NAME}:${GIT_COMMIT_SHORT} .
@@ -150,35 +172,48 @@ pipeline {
             script {
                 echo "🧹 Limpieza final..."
                 
-                // Eliminar imágenes locales primero
-                sh """
-                    # Obtener contenedores que usan nuestras imágenes
-                    CONTAINERS=\$(docker ps -aq --filter ancestor=${IMAGE_NAME} 2>/dev/null || echo "")
-                    if [ ! -z "\$CONTAINERS" ]; then
-                        echo "Limpiando contenedores: \$CONTAINERS"
-                        docker stop \$CONTAINERS || true
-                        docker rm \$CONTAINERS || true
-                    else
-                        echo "No hay contenedores que limpiar"
-                    fi
+                // Solo limpiar Docker si las variables existen
+                if (env.IMAGE_NAME && env.VERSION) {
+                    sh """
+                        # Obtener contenedores que usan nuestras imágenes
+                        CONTAINERS=\$(docker ps -aq --filter ancestor=${IMAGE_NAME} 2>/dev/null || echo "")
+                        if [ ! -z "\$CONTAINERS" ]; then
+                            echo "Limpiando contenedores: \$CONTAINERS"
+                            docker stop \$CONTAINERS || true
+                            docker rm \$CONTAINERS || true
+                        else
+                            echo "No hay contenedores que limpiar"
+                        fi
 
-                    # Eliminar las imágenes
-                    docker rmi ${IMAGE_NAME}:${VERSION} || true
-                    docker rmi ${IMAGE_NAME}:latest || true
-                    docker rmi ${IMAGE_NAME}:${GIT_COMMIT_SHORT} || true
-                    docker image prune -f || true
-                """
+                        # Eliminar las imágenes si existen
+                        docker rmi ${IMAGE_NAME}:${VERSION} || true
+                        docker rmi ${IMAGE_NAME}:latest || true
+                    """
+                    
+                    // Solo si GIT_COMMIT_SHORT existe
+                    if (env.GIT_COMMIT_SHORT) {
+                        sh "docker rmi ${IMAGE_NAME}:${GIT_COMMIT_SHORT} || true"
+                    }
+                    
+                    sh "docker image prune -f || true"
+                } else {
+                    echo "Variables de imagen no disponibles, saltando limpieza de Docker"
+                }
                 
-                // Limpiar workspace después de Docker
+                // Limpiar workspace
                 try {
-                    cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenSuccess: true, cleanWhenUnstable: true)
-                } catch (Exception e) {
-                    echo "Warning: No se pudo limpiar workspace automáticamente: ${e.getMessage()}"
-                    // Limpieza manual como fallback
                     sh '''
                         cd /var/jenkins_home/workspace/
-                        rm -rf CI-Generador-Claves || true
+                        if [ -d "CI-Generador-Claves" ]; then
+                            # Cambiar permisos antes de eliminar
+                            find CI-Generador-Claves -name ".yarn" -type d -exec chmod -R 777 {} + || true
+                            find CI-Generador-Claves -path "*/.yarn/*" -exec chmod 777 {} + || true
+                            # Eliminar directorio
+                            rm -rf CI-Generador-Claves || true
+                        fi
                     '''
+                } catch (Exception e) {
+                    echo "Warning: No se pudo limpiar workspace: ${e.getMessage()}"
                 }
             }
         }
@@ -200,10 +235,14 @@ pipeline {
                     Para usar esta versión:
                     docker pull ${IMAGE_NAME}:${VERSION}
                     docker run -d -p 3000:3000 ${IMAGE_NAME}:${VERSION}
-
-                    También disponible por commit:
-                    docker pull ${IMAGE_NAME}:${GIT_COMMIT_SHORT}
                     """
+                    
+                    if (env.GIT_COMMIT_SHORT) {
+                        echo """
+                        También disponible por commit:
+                        docker pull ${IMAGE_NAME}:${GIT_COMMIT_SHORT}
+                        """
+                    }
                 }
             }
         }

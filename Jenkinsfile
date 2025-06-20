@@ -72,14 +72,12 @@ pipeline {
                         env.VERSION = "${packageVersion}-build.${BUILD_NUMBER}"
                         env.IS_RELEASE = 'false'
                     }
-
                     echo "🏷️ Version determined: ${env.VERSION}"
                     echo "📦 Is release: ${env.IS_RELEASE}"
                 }
             }
         }
 
-        // 🔧 Nueva etapa agregada aquí
         stage('Simular archivos Yarn') {
             steps {
                 script {
@@ -89,6 +87,19 @@ pipeline {
                         mkdir -p .yarn/releases
                         touch .yarnrc.yml
                         touch .yarn/releases/yarn-placeholder.cjs
+                    '''
+                }
+            }
+        }
+
+        stage('Generar yarn.lock válido') {
+            steps {
+                script {
+                    echo "🔧 Ejecutando 'yarn install' fuera del contenedor para actualizar yarn.lock"
+                    sh '''
+                        cd /var/jenkins_home/workspace/CI-Generador-Claves
+                        corepack enable
+                        yarn install || true
                     '''
                 }
             }
@@ -167,7 +178,6 @@ pipeline {
                 } else {
                     echo "Variables de imagen no disponibles, saltando limpieza de Docker"
                 }
-
                 try {
                     sh '''
                         cd /var/jenkins_home/workspace/
@@ -187,6 +197,8 @@ pipeline {
                 if (env.IS_RELEASE == 'true') {
                     echo """
                     🎉 ¡Release ${VERSION} publicado exitosamente!
+
+                    Para usar esta versión:
                     docker pull ${IMAGE_NAME}:${VERSION}
                     docker pull ${IMAGE_NAME}:latest
                     docker run -d -p 3000:3000 ${IMAGE_NAME}:${VERSION}
@@ -194,6 +206,8 @@ pipeline {
                 } else {
                     echo """
                     ✅ ¡Build de desarrollo completado!
+
+                    Para usar esta versión:
                     docker pull ${IMAGE_NAME}:${VERSION}
                     docker run -d -p 3000:3000 ${IMAGE_NAME}:${VERSION}
                     """
